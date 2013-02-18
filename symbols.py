@@ -32,66 +32,56 @@ class Symbol():
         return(new.id)
 
 
-    def _add_file(self, m, module):
+    def _add_files(self, files, module):
         try:
-            new = File(number=m.group(1), name=m.group(2), module=module)
-            self.symboldb.session.add(new)
-            self.symboldb.session.commit()
+            self.symboldb.session.add_all(File(number=f[0],
+                                               name=f[1],
+                                               module=module) for f in files)
         except ProgrammingError, e:
             print e
-            return None
 
-    def _add_public(self, m, module):
+    def _add_publics(self, publics, module):
         try:
-            new = Public(address=int("0x%s" % m.group(1), 16),
-                           size=m.group(2), name=m.group(3),
-                           module=module,
-                           address_range="[%d, %d)" % (int("0x%s" % m.group(1), 16), int("0x%s" % m.group(1), 16) + int("0x%s" % m.group(2), 16) ))
-            self.symboldb.session.add(new)
+            self.symboldb.session.add_all(Public(address=p[0],
+                                                 size=p[1], name=p[2],
+                                                 module=module) for p in publics)
         except ProgrammingError, e:
             print e
-            return None
-        return(new.id)
 
-
-    def _add_func(self, m, module):
+    def _add_funcs(self, funcs, module):
         try:
-            new = Function(address=int("0x%s" % m.group(1), 16),
-                           size=m.group(2),
-                           parameter_size=m.group(3),
-                           name=m.group(4),
-                           module=module,
-                           address_range="[%d, %d)" % (int("0x%s" % m.group(1), 16), int("0x%s" % m.group(1), 16) + int("0x%s" % m.group(2), 16) ))
-            self.symboldb.session.add(new)
+            gen = (Function(address=f[0],
+                            size=f[1],
+                            parameter_size=f[2],
+                            name=f[3],
+                            module=module,
+                            address_range="[%d, %d)" % (f[0], f[0] + f[1])
+                            ) for f in funcs)
+            self.symboldb.session.add_all(gen)
         except ProgrammingError, e:
             print e
-            return None
 
-        return(new.id)
-
-    def _add_line(self, m):
+    def _add_lines(self, lines, module):
         try:
-            new = Line(address=int("0x%s" % m.group(1), 16),
-                       size=m.group(2),
-                       line=m.group(3),
-                       file=m.group(4),
-                       address_range="[%d, %d)" % (int("0x%s" % m.group(1), 16), int("0x%s" % m.group(1), 16) + int("0x%s" % m.group(2), 16) ))
-            self.symboldb.session.add(new)
+            gen = (Line(address=l[0],
+                        size=l[1],
+                        line=l[2],
+                        file=l[3],
+                        module=module,
+                        address_range="[%d, %d)" % (l[0], l[0] + l[1]))
+                   for l in lines)
+            self.symboldb.session.add_all(gen)
         except ProgrammingError, e:
             print e
-            return None
 
-        return(new.id)
-
-    def _add_stack(self, m, module):
+    def _add_stacks(self, stacks, module):
         try:
-            new = Stackwalk(address=int("0x%s" % m.group(2), 16), stackwalk_data=m.group(0), module=module)
-            self.symboldb.session.add(new)
+            gen = (Stackwalk(address=s[0],
+                             stackwalk_data=s[1],
+                             module=module) for s in stacks)
+            self.symboldb.session.add_all(gen)
         except ProgrammingError, e:
             print e
-            return None
-
-        return(new.id)
 
     def add(self, url):
         page = urllib.urlopen(url)
@@ -99,10 +89,12 @@ class Symbol():
         page.close()
         module = None
         mod_id = None
-        last_func = None
-        last_line = None
-        last_public = None
         skip = 0
+        files = []
+        funcs = []
+        publics = []
+        stacks = []
+        lines = []
 
         for line in symbols:
             if line is None:
@@ -120,29 +112,39 @@ class Symbol():
 
             m = re.search('^FILE (\S+) (.*)', line)
             if m:
-                self._add_file(m, mod_id)
+                files.append((m.group(1), m.group(2)))
                 continue
 
             m = re.search('^FUNC (\S+) (\S+) (\S+) (\S+)', line)
             if m:
-                func_id = self._add_func(m, mod_id)
+                funcs.append((int(m.group(1), 16), int(m.group(2), 16),
+                              int(m.group(3), 16), m.group(4)))
                 continue
 
             # XXX Figure out how to handle ranges for stacks, also non WIN stacks
             m = re.search('^STACK WIN (\S+) (\S+) (\S+) (.*)', line)
             if m:
-                stack_id = self._add_stack(m, mod_id)
+                stacks.append((int(m.group(2), 16), m.group(0)))
                 continue
 
             # XXX
             m = re.search('^PUBLIC (\S+) (\S+) (\S+)', line)
             if m:
+                publics.append((int(m.group(1), 16), int(m.group(2), 16),
+                                m.group(3)))
                 continue
 
             m = re.search('^(\S+) (\S+) (\S+) (\S+)', line)
             if m:
-                line = self._add_line(m)
+                lines.append((int(m.group(1), 16), int(m.group(2), 16),
+                              int(m.group(3)), int(m.group(4))))
                 continue
+        # Now add all the collected data
+        self._add_files(files, mod_id)
+        self._add_funcs(funcs, mod_id)
+        #self._add_publics(publics, mod_id)
+        self._add_lines(lines, mod_id)
+        self._add_stacks(stacks, mod_id)
 
         self.symboldb.session.commit()
 
